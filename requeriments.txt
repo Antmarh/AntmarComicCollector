@@ -1,0 +1,4 @@
+ttkbootstrap
+Pillow
+requests
+beautifulsoup4
