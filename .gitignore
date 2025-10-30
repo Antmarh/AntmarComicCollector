@@ -1,0 +1,9 @@
+# Ignorar archivos locales
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+.env
+config.ini
+
