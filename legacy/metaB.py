@@ -3,22 +3,18 @@
 # ==============================================================================
 import sys
 import io
-
-# Configurar encoding para evitar problemas con emojis en Windows
-if sys.platform == 'win32':
-    try:
-        if sys.stdout is not None and hasattr(sys.stdout, 'buffer') and sys.stdout.buffer is not None:
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-        if sys.stderr is not None and hasattr(sys.stderr, 'buffer') and sys.stderr.buffer is not None:
-            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-    except Exception as e:
-        pass
-
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
-from PIL import Image, ImageTk
 import os
 import re
+
+from antmar.cbz import inject_xml_into_cbz, read_comicinfo_from_cbz, get_cover_from_cbz  # ← si esas funciones ya existen; si no, bórralas también por ahora
+
+from antmar.utils import (
+    natural_sort_key,
+    get_local_ip
+)
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
+from antmar.metadata import generate_comicinfo_xml
 
 
 class AIMetadataDialog:
@@ -333,129 +329,19 @@ DB_FILE = "comics.db"
 # ==============================================================================
 # 3. FUNCIONES AUXILIARES GLOBALES
 # ==============================================================================
-def natural_sort_key(s): return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+from antmar.utils import natural_sort_key
 
 def parse_query(query):
     match = re.search(r'^(.*?)(?:#\s*|\s+)(\d+(\.\d+)?)$', query.strip())
     if match: return match.group(1).strip(), match.group(2).strip()
     return query.strip(), None
 
-def generate_comicinfo_xml(metadata):
-    clean_metadata = {k: v for k, v in metadata.items() if k != 'CoverURL' and v is not None}
-    root = ET.Element('ComicInfo', {'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema', 'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance'})
-    for key, value in clean_metadata.items():
-        if value: ET.SubElement(root, key).text = str(value)
-    dom = minidom.parseString(ET.tostring(root, 'utf-8')); return dom.toprettyxml(indent="  ", encoding="utf-8").decode('utf-8')
 
-def inject_xml_into_cbz(cbz_path_str, xml_string):
-    cbz_path = Path(cbz_path_str); temp_zip_path = cbz_path.with_suffix(cbz_path.suffix + ".tmp")
-    try:
-        xml_bytes = xml_string.encode('utf-8-sig')
-        with zipfile.ZipFile(cbz_path, 'r') as zin, zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                if item.filename.lower() != 'comicinfo.xml': zout.writestr(item, zin.read(item.filename))
-            zout.writestr('ComicInfo.xml', xml_bytes)
-        for i in range(5):
-            try:
-                shutil.move(temp_zip_path, cbz_path); return True
-            except PermissionError:
-                time.sleep(0.2)
-        raise PermissionError(f"No se pudo reemplazar el archivo {cbz_path.name} después de 5 intentos.")
-    except Exception as e:
-        print(f"Error CRÍTICO al inyectar XML en {cbz_path.name}: {e}")
-        if temp_zip_path.exists():
-            try: os.remove(temp_zip_path)
-            except Exception as e_clean: print(f"Error adicional al limpiar: {e_clean}")
-        return False
 
-def get_translator():
-    global translator
-    if translator is not None: return translator
-    if not DEEPL_API_KEY or "TU_CLAVE_API" in DEEPL_API_KEY: return None
-    try:
-        import deepl
-        translator = deepl.Translator(DEEPL_API_KEY)
-        print("Traductor de DeepL inicializado por primera vez.")
-        return translator
-    except Exception as e:
-        messagebox.showerror("Error de DeepL", f"No se pudo inicializar el traductor. Verifica tu clave API y conexión.\n\nError: {e}")
-        return None
 
-def get_comicvine_details(comic_guid, status_var_ref):
-    if not COMICVINE_API_KEY:
-        status_var_ref.set("Error: Clave de Comic Vine no configurada.")
-        return {}
-    
-    detail_url = f"https://comicvine.gamespot.com/api/issue/{comic_guid}/"
-    fields_to_request = ["name", "issue_number", "volume", "description", "image", "person_credits", "character_credits", "team_credits", "story_arc_credits", "location_credits", "cover_date", "deck", "site_detail_url"]
-    params = {"api_key": COMICVINE_API_KEY, "format": "json", "field_list": ",".join(fields_to_request)}
-    
-    try:
-        status_var_ref.set("Obteniendo expediente completo..."); 
-        response = requests.get(detail_url, params=params, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        issue_data = response.json().get('results', {})
-        if not issue_data: return {}
 
-        status_var_ref.set("Procesando datos..."); 
-        person_credits = issue_data.get('person_credits', [])
-        credits = {'Writer': set(), 'Penciller': set(), 'Inker': set(), 'Colorist': set(), 'Letterer': set(), 'CoverArtist': set(), 'Editor': set(), 'Artist': set()}
-        role_map = {'writer': 'Writer', 'penciller': 'Penciller', 'penciler': 'Penciller', 'inker': 'Inker', 'colorist': 'Colorist', 'colorer': 'Colorist', 'letterer': 'Letterer', 'cover': 'CoverArtist', 'cover artist': 'CoverArtist', 'editor': 'Editor', 'artist': 'Artist', 'art': 'Artist', 'pencils': 'Artist', 'inks': 'Artist', 'colors': 'Artist'}
-        
-        for person in person_credits:
-            name = person.get('name')
-            if not name: continue
-            for role in person.get('role', '').lower().split(', '):
-                if role.strip() in role_map: credits[role_map[role.strip()]].add(name)
 
-        if not credits['Penciller'] and not credits['Inker'] and not credits['Colorist'] and credits['Artist']:
-             credits['Penciller'] = credits['Artist']
 
-        metadata = {
-            'Series': issue_data.get('volume', {}).get('name') or '', 'Number': str(issue_data.get('issue_number') or ''), 'Publisher': issue_data.get('volume', {}).get('publisher', {}).get('name') or '',
-            'Title': issue_data.get('name') or '', 'Summary': issue_data.get('description', '') or '', 'Writer': ', '.join(sorted(list(credits['Writer']))),
-            'Penciller': ', '.join(sorted(list(credits['Penciller']))), 'Inker': ', '.join(sorted(list(credits['Inker']))), 'Colorist': ', '.join(sorted(list(credits['Colorist']))),
-            'Letterer': ', '.join(sorted(list(credits['Letterer']))), 'CoverArtist': ', '.join(sorted(list(credits['CoverArtist']))), 'Editor': ', '.join(sorted(list(credits['Editor']))),
-            'StoryArc': ', '.join(sorted([c['name'] for c in issue_data.get('story_arc_credits', []) if 'name' in c])),
-            'Characters': ', '.join(sorted([c['name'] for c in issue_data.get('character_credits', []) if 'name' in c])), 'Teams': ', '.join(sorted([c['name'] for c in issue_data.get('team_credits', []) if 'name' in c])),
-            'CoverURL': issue_data.get('image', {}).get('super_url'), 'Web': issue_data.get('site_detail_url', ''), 'Notes': issue_data.get('deck', '') or '',
-            'ScanInformation': f"Scraped from Comic Vine ({issue_data.get('id', 'N/A')})"
-        }
-
-        cover_date = issue_data.get('cover_date')
-        if cover_date:
-            try:
-                parts = cover_date.split('T')[0].split('-')
-                metadata['Year'], metadata['Month'], metadata['Day'] = int(parts[0]), int(parts[1]), int(parts[2])
-            except (ValueError, IndexError): pass
-
-        local_translator = get_translator()
-        if metadata.get('Summary') and local_translator:
-            try:
-                status_var_ref.set("Traduciendo resumen (DeepL)...")
-                clean_summary = html.unescape(re.sub('<[^<]+?>', '', metadata['Summary']))
-                if clean_summary.strip():
-                    metadata['Summary'] = local_translator.translate_text(clean_summary, target_lang="ES").text
-                    metadata['LanguageISO'] = 'es'
-            except Exception as e:
-                print(f"No se pudo traducir el resumen con DeepL: {e}")
-        return metadata
-    except requests.exceptions.RequestException as e:
-        messagebox.showerror("Error de Red", f"No se pudo obtener detalles de Comic Vine.\n{e}")
-        return {}
-        
-def read_comicinfo_from_cbz(cbz_path):
-    try:
-        with zipfile.ZipFile(cbz_path, 'r') as zf:
-            xml_filename_list = [f for f in zf.namelist() if f.lower() == 'comicinfo.xml']
-            if xml_filename_list:
-                with zf.open(xml_filename_list[0]) as xml_file:
-                    tree = ET.parse(xml_file); root = tree.getroot(); metadata = {}
-                    for child in root: metadata[child.tag.split('}')[-1]] = child.text
-                    return metadata
-    except Exception as e: 
-        print(f"No se pudo leer ComicInfo.xml de {cbz_path}: {e}")
-    return None
 
 def remove_page_number(pil_image):
     if not OPENCV_AVAILABLE: return pil_image
@@ -695,15 +581,7 @@ def load_publisher_logo(publisher_name, height):
     except Exception as e:
         messagebox.showerror("Error de OpenAI", f"No se pudo generar el resumen.\nVerifica tu clave API y conexión.\nError: {e}")
         return None
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+
 
 # ==============================================================================
 # 4. CLASES DE DIÁLOGOS Y VENTANAS
@@ -6320,29 +6198,11 @@ Desarrollado con ❤️ para los amantes del cómic
 # ==============================================================================
 # 5. SERVIDOR API (FLASK)
 # ==============================================================================
+
 def create_flask_app():
-    """
-    Función que crea y configura la aplicación Flask.
-    Esto es crucial para que PyInstaller funcione correctamente.
-    """
+    """Crea y configura la aplicación Flask para el servidor API"""
     app = Flask(__name__)
-
-    @app.route('/api/library', methods=['GET'])
-    def get_library():
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, series, number, title, path FROM comics ORDER BY series, CAST(number AS REAL)")
-        comics_data = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        for comic in comics_data:
-            try:
-                with zipfile.ZipFile(comic['path'], 'r') as zf:
-                    comic['page_count'] = len([f for f in zf.namelist() if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))])
-            except Exception:
-                comic['page_count'] = 0
-        return jsonify(comics_data)
-
+    
     def get_image_from_cbz(comic_path, page_index):
         try:
             with zipfile.ZipFile(comic_path, 'r') as zf:
