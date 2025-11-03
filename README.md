@@ -1,3 +1,6 @@
+![Descargas](https://img.shields.io/github/downloads/Antmarh/AntmarComicCollector/total?label=Descargas&color=brightgreen)
+
+
 # 🦸‍♂️ Antmar Comic Collector
 
 **Antmar Comic Collector** nació como un proyecto personal para adaptar mi propia colección de cómics.  
