@@ -4361,6 +4361,7 @@ Desarrollado con ❤️ para los amantes del cómic
         self.library_frame = ttk.LabelFrame(paned_window, text="Biblioteca", style='Comic.TLabelframe'); self.library_frame.rowconfigure(2, weight=1); self.library_frame.columnconfigure(0, weight=1); paned_window.add(self.library_frame, weight=2)
         
         top_controls_frame = ttk.Frame(self.library_frame); top_controls_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        self.top_controls_frame = top_controls_frame  # Save reference for back button
         scan_menu_button = ttk.Menubutton(top_controls_frame, text="Escanear...")
         scan_menu_button.pack(side=tk.LEFT, padx=(0, 5))
         scan_menu = tk.Menu(scan_menu_button, tearoff=False)
@@ -5265,18 +5266,18 @@ Desarrollado con ❤️ para los amantes del cómic
             cover_label = ttk.Label(stack_frame, image=self.placeholder_image, anchor=CENTER)
             cover_label.pack(fill=tk.BOTH, expand=True)
             
-            # Overlay con contador de elementos
-            overlay_frame = ttk.Frame(stack_frame)
+            # Overlay con contador de elementos (usando tk.Label para tener más control de colores)
+            overlay_frame = tk.Frame(stack_frame, bg='black')
             overlay_frame.place(relx=0.5, rely=0.05, anchor=CENTER)
             
-            count_label = ttk.Label(
+            count_label = tk.Label(
                 overlay_frame,
                 text=f"📚 {len(comics_list)}",
-                font="-size 16 -weight bold",
-                foreground="white",
-                background="rgba(0, 0, 0, 0.7)"
+                font="-size 14 -weight bold",
+                fg="white",
+                bg="black"
             )
-            count_label.pack(padx=10, pady=5)
+            count_label.pack(padx=8, pady=4)
             
             # Título del grupo
             title_label = ttk.Label(
@@ -5375,24 +5376,24 @@ Desarrollado con ❤️ para los amantes del cómic
     
     def _show_back_button(self):
         """Muestra el botón 'Volver' en la interfaz"""
-        if not hasattr(self, 'back_button'):
-            # Crear botón solo si no existe
+        if not hasattr(self, 'back_button_frame'):
+            # Crear frame para el botón si no existe
+            self.back_button_frame = ttk.Frame(self.top_controls_frame)
             self.back_button = ttk.Button(
-                self.library_frame,
+                self.back_button_frame,
                 text="← Volver",
                 command=self._exit_stack
             )
+            self.back_button.pack()
         
-        # Posicionar el botón en la parte superior (row=0, antes de top_controls_frame)
-        self.back_button.grid(row=0, column=0, sticky="w", padx=5, pady=2)
-        self.back_button.lift()  # Traer al frente
-        
+        # Mostrar el frame del botón al inicio
+        self.back_button_frame.pack(side=tk.LEFT, padx=(0, 10))
         print("✅ Botón 'Volver' mostrado")
     
     def _hide_back_button(self):
         """Oculta el botón 'Volver'"""
-        if hasattr(self, 'back_button'):
-            self.back_button.grid_remove()
+        if hasattr(self, 'back_button_frame'):
+            self.back_button_frame.pack_forget()
             print("✅ Botón 'Volver' ocultado")
         
     def _lazy_load_thumbnails(self):
