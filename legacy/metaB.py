@@ -5263,7 +5263,7 @@ Desarrollado con ❤️ para los amantes del cómic
             representative_path = comics_list[0]['path']
             
             # Label para la portada con placeholder
-            cover_label = ttk.Label(stack_frame, image=self.placeholder_image, anchor=CENTER)
+            cover_label = ttk.Label(stack_frame, image=self.placeholder_image, anchor=tk.CENTER)
             cover_label.pack(fill=tk.BOTH, expand=True)
             
             # Overlay con contador de elementos (usando tk.Label para tener más control de colores)
@@ -5283,7 +5283,7 @@ Desarrollado con ❤️ para los amantes del cómic
             title_label = ttk.Label(
                 stack_frame,
                 text=str(group_name),
-                anchor=CENTER,
+                anchor=tk.CENTER,
                 wraplength=thumb_width - 10,
                 font="-weight bold"
             )
@@ -5310,13 +5310,10 @@ Desarrollado con ❤️ para los amantes del cómic
                 'representative_path': representative_path  # Store for thumbnail updates
             }
             
-            # ALSO store under representative_path for _update_thumbnail_widget
-            self.thumbnail_widgets[representative_path] = {
-                'frame': stack_frame,
-                'cover': cover_label,
-                'title': title_label,
-                'count': count_label
-            }
+            # For lazy loading: also map representative_path to stack widget
+            # This allows _update_thumbnail_widget to find the widget when thumbnail loads
+            if representative_path not in self.thumbnail_widgets:
+                self.thumbnail_widgets[representative_path] = self.thumbnail_widgets[stack_key]
             
             # Hacer la pila clickeable
             for widget in (stack_frame, cover_label, title_label, count_label):
@@ -5436,14 +5433,14 @@ Desarrollado con ❤️ para los amantes del cómic
                     
                 widget_y = widgets['frame'].winfo_y()
                 
-                # Si está en el área visible
+                # If in visible area
                 if visible_top <= widget_y <= visible_bottom:
-                    # Para stacks, el key es 'stack_{group_name}', necesitamos extraer el path real
+                    # For stacks, the key is 'stack_{group_name}', skip them
+                    # (stacks are already processed in _show_stack_view)
                     if key.startswith('stack_'):
-                        # No procesar stacks aquí, ya se procesan en _show_stack_view
                         continue
                     
-                    # Para cómics normales, el key es el path
+                    # For regular comics, the key is the path
                     path = key
                     if path not in self.thumbnail_cache and os.path.exists(path):
                         # Marcar como cargando para evitar duplicados
