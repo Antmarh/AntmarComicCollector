@@ -1,7 +1,14 @@
 import os
 import requests
 from antmar.utils import natural_sort_key   # opcional, solo si lo usas
-import deepl
+
+try:
+    import deepl
+    DEEPL_AVAILABLE = True
+except ImportError:
+    DEEPL_AVAILABLE = False
+    deepl = None
+
 from antmar import config
 
 def _get_key():
@@ -13,10 +20,12 @@ def _get_key():
 
 def get_translator():
     global translator
+    if not DEEPL_AVAILABLE:
+        print("⚠️ DeepL no está disponible (módulo deepl no instalado)")
+        return None
     if translator is not None: return translator
     if not DEEPL_API_KEY or "TU_CLAVE_API" in DEEPL_API_KEY: return None
     try:
-        import deepl
         translator = deepl.Translator(DEEPL_API_KEY)
         print("Traductor de DeepL inicializado por primera vez.")
         return translator

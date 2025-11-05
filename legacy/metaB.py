@@ -287,6 +287,8 @@ import shutil
 from PIL import Image, ImageDraw, ImageTk
 import traceback
 import socket
+import platform
+import uuid
 from flask import Flask, jsonify, send_file, abort
 from werkzeug.serving import make_server
 
@@ -355,8 +357,65 @@ def parse_query(query):
     return query.strip(), None
 
 
+def _atomic_replace(src, dest):
+    """
+    Reemplaza el archivo destino con src de forma atómica.
+    Usa os.replace cuando es posible (mismo filesystem).
+    En Windows, si falla, intenta renombrar.
+    """
+    try:
+        # os.replace es atómico en el mismo filesystem
+        os.replace(src, dest)
+        return True
+    except OSError as e:
+        # En algunos casos en Windows, puede ser necesario eliminar el destino primero
+        if platform.system() == 'Windows':
+            try:
+                if os.path.exists(dest):
+                    os.remove(dest)
+                os.rename(src, dest)
+                return True
+            except Exception as e2:
+                print(f"❌ Error en _atomic_replace fallback: {e2}")
+                raise
+        raise
 
 
+def _create_temp_in_dest_dir(dest_path, suffix='.tmp'):
+    """
+    Crea un archivo temporal en el mismo directorio que dest_path
+    para asegurar operaciones atómicas en el mismo filesystem.
+    Retorna la ruta del archivo temporal.
+    """
+    dest_dir = os.path.dirname(dest_path)
+    if not dest_dir:
+        dest_dir = '.'
+    
+    # Asegurar que el directorio existe
+    os.makedirs(dest_dir, exist_ok=True)
+    
+    # Crear archivo temporal con nombre único
+    temp_name = f".tmp_{uuid.uuid4().hex}{suffix}"
+    temp_path = os.path.join(dest_dir, temp_name)
+    return temp_path
+
+
+def _safe_json_decode(response):
+    """
+    Intenta decodificar JSON de respuesta de forma segura.
+    Retorna (success: bool, data: dict or None, error_msg: str or None)
+    """
+    try:
+        data = response.json()
+        return True, data, None
+    except json.JSONDecodeError as e:
+        error_msg = f"Respuesta JSON inválida: {e}"
+        print(f"❌ {error_msg}")
+        return False, None, error_msg
+    except Exception as e:
+        error_msg = f"Error inesperado decodificando JSON: {e}"
+        print(f"❌ {error_msg}")
+        return False, None, error_msg
 
 
 
@@ -1043,51 +1102,147 @@ class MetadataEditorWindow(tk.Toplevel):
             self.after(0, lambda: messagebox.showerror("Error de Whakoom", f"Error al obtener detalles:\n{e}", parent=self))
             import traceback; traceback.print_exc()
     def _find_issue_in_volume_thread(self, volume_id, issue_number):
+        """Buscar issue en volumen con manejo robusto de errores"""
         if not COMICVINE_API_KEY:
-            self.after(0, lambda: messagebox.showerror("API Key Faltante", "La clave API de Comic Vine no está configurada.", parent=self)); return
+            self.after(0, lambda: messagebox.showerror(
+                "API Key Faltante", 
+                "La clave API de Comic Vine no está configurada.\n\nPor favor, ve a Archivo > Configurar API Keys", 
+                parent=self))
+            return
         
         try:
             if issue_number:
                 # Búsqueda específica por número
-                params = {"api_key": COMICVINE_API_KEY, "format": "json", "filter": f"volume:{volume_id},issue_number:{issue_number}"}
-                response = requests.get("https://comicvine.gamespot.com/api/issues/", params=params, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-                response.raise_for_status()
-                results = response.json().get('results', [])
+                print(f"🔍 Buscando issue #{issue_number} en volumen {volume_id}")
+                params = {
+                    "api_key": COMICVINE_API_KEY, 
+                    "format": "json", 
+                    "filter": f"volume:{volume_id},issue_number:{issue_number}"
+                }
                 
-                if not results: 
-                    self.after(0, lambda: messagebox.showinfo("No encontrado", f"El número #{issue_number} no se encontró.", parent=self)); 
+                response = requests.get(
+                    "https://comicvine.gamespot.com/api/issues/", 
+                    params=params, 
+                    headers=HEADERS, 
+                    timeout=REQUEST_TIMEOUT
+                )
+                response.raise_for_status()
+                
+                # Verificar JSON válido usando helper
+                success, data, error_msg = _safe_json_decode(response)
+                if not success:
+                    self.after(0, lambda: messagebox.showerror(
+                        "Error de API",
+                        "ComicVine devolvió una respuesta inválida.",
+                        parent=self))
+                    return
+                
+                results = data.get('results', [])
+                
+                if not results:
+                    print(f"⚠️ Issue #{issue_number} no encontrado")
+                    self.after(0, lambda: messagebox.showinfo(
+                        "No encontrado", 
+                        f"El número #{issue_number} no se encontró en este volumen.",
+                        parent=self))
                     return
                     
                 # Usar el primer resultado
                 issue_guid = results[0].get('api_detail_url', '').strip('/').split('/')[-1]
+                print(f"✅ Issue encontrado: {issue_guid}")
                 
             else:
-                # Sin número específico - mostrar lista de issues del volumen para que el usuario elija
-                params = {"api_key": COMICVINE_API_KEY, "format": "json", "filter": f"volume:{volume_id}", "sort": "issue_number:asc", "limit": 100}
-                response = requests.get("https://comicvine.gamespot.com/api/issues/", params=params, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+                # Sin número específico - mostrar lista de issues del volumen
+                print(f"🔍 Listando issues del volumen {volume_id}")
+                params = {
+                    "api_key": COMICVINE_API_KEY, 
+                    "format": "json", 
+                    "filter": f"volume:{volume_id}", 
+                    "sort": "issue_number:asc", 
+                    "limit": 100
+                }
+                
+                response = requests.get(
+                    "https://comicvine.gamespot.com/api/issues/", 
+                    params=params, 
+                    headers=HEADERS,
+                    timeout=REQUEST_TIMEOUT
+                )
                 response.raise_for_status()
-                results = response.json().get('results', [])
+                
+                # Verificar JSON válido usando helper
+                success, data, error_msg = _safe_json_decode(response)
+                if not success:
+                    self.after(0, lambda: messagebox.showerror(
+                        "Error de API",
+                        "ComicVine devolvió una respuesta inválida.",
+                        parent=self))
+                    return
+                
+                results = data.get('results', [])
                 
                 if not results:
-                    self.after(0, lambda: messagebox.showinfo("Sin contenido", "Este volumen no tiene issues disponibles.", parent=self)); 
+                    print(f"⚠️ Volumen sin issues")
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Sin contenido", 
+                        "Este volumen no tiene issues disponibles.",
+                        parent=self))
                     return
                 
                 # Si solo hay uno, usarlo directamente
                 if len(results) == 1:
                     issue_guid = results[0].get('api_detail_url', '').strip('/').split('/')[-1]
+                    print(f"✅ Un solo issue encontrado: {issue_guid}")
                 else:
                     # Mostrar selector de issues
+                    print(f"✅ {len(results)} issues encontrados")
                     self.after(0, lambda: self._show_issue_selector(results))
                     return
             
             # Obtener metadatos del issue
+            print(f"📥 Obteniendo metadatos del issue...")
             metadata = get_comicvine_details(issue_guid, self.status_var_ref)
+            
+            if not metadata:
+                print(f"❌ No se pudieron obtener metadatos")
+                self.after(0, lambda: messagebox.showerror(
+                    "Error",
+                    "No se pudieron obtener los metadatos del issue.",
+                    parent=self))
+                return
+            
+            print(f"✅ Metadatos obtenidos correctamente")
             self.after(0, self.populate_fields, metadata, "cv")
-            if metadata.get('CoverURL'): 
+            
+            if metadata.get('CoverURL'):
                 self.download_cover(metadata['CoverURL'])
                 
-        except requests.exceptions.RequestException as e: 
-            self.after(0, lambda: messagebox.showerror("Error de Red", f"No se pudo buscar el ejemplar.\n{e}", parent=self))
+        except requests.exceptions.Timeout:
+            print(f"❌ Timeout buscando issue")
+            self.after(0, lambda: messagebox.showerror(
+                "Timeout",
+                "La búsqueda del issue tardó demasiado.\n\nVerifica tu conexión a internet.",
+                parent=self))
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Error de conexión: {e}")
+            self.after(0, lambda: messagebox.showerror(
+                "Error de Conexión",
+                "No se pudo conectar con ComicVine.\n\nVerifica tu conexión a internet.",
+                parent=self))
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error de red: {e}")
+            self.after(0, lambda: messagebox.showerror(
+                "Error de Red", 
+                f"No se pudo buscar el ejemplar.\n\nError: {e}",
+                parent=self))
+        except Exception as e:
+            print(f"❌ Error inesperado: {e}")
+            traceback.print_exc()
+            self.after(0, lambda: messagebox.showerror(
+                "Error",
+                f"Error inesperado al buscar el issue:\n{e}",
+                parent=self))
+
 
     def _show_issue_selector(self, issues):
         """Muestra una ventana para seleccionar un issue específico cuando no hay número"""
@@ -1126,14 +1281,99 @@ class MetadataEditorWindow(tk.Toplevel):
                               "Intenta ser más específico con el número.", parent=self)
 
     def _search_for_volumes_thread(self, series_name):
+        """Buscar volúmenes en ComicVine con manejo robusto de errores"""
         if not COMICVINE_API_KEY:
-            self.after(0, lambda: messagebox.showerror("API Key Faltante", "La clave API de Comic Vine no está configurada.", parent=self)); return
-        params = {"api_key": COMICVINE_API_KEY, "format": "json", "resources": "volume", "query": series_name, "limit": 100}
+            self.after(0, lambda: messagebox.showerror(
+                "API Key Faltante", 
+                "La clave API de Comic Vine no está configurada.\n\nPor favor, ve a Archivo > Configurar API Keys", 
+                parent=self))
+            return
+        
+        if not series_name or not series_name.strip():
+            self.after(0, lambda: messagebox.showwarning(
+                "Búsqueda vacía",
+                "Por favor, introduce un nombre de serie para buscar.",
+                parent=self))
+            return
+        
+        params = {
+            "api_key": COMICVINE_API_KEY, 
+            "format": "json", 
+            "resources": "volume", 
+            "query": series_name.strip(), 
+            "limit": 100
+        }
+        
         try:
-            response = requests.get("https://comicvine.gamespot.com/api/search", params=params, headers=HEADERS, timeout=REQUEST_TIMEOUT); response.raise_for_status()
-            volumes = sorted([v for v in response.json().get('results', [])], key=lambda x: int(x.get('start_year', 9999)))
+            print(f"🔍 Buscando volúmenes en ComicVine: '{series_name}'")
+            response = requests.get(
+                "https://comicvine.gamespot.com/api/search", 
+                params=params, 
+                headers=HEADERS, 
+                timeout=REQUEST_TIMEOUT
+            )
+            response.raise_for_status()
+            
+            # Verificar que la respuesta sea JSON válido usando helper
+            success, data, error_msg = _safe_json_decode(response)
+            if not success:
+                self.after(0, lambda: messagebox.showerror(
+                    "Error de API",
+                    "ComicVine devolvió una respuesta inválida.\n\nPor favor, verifica tu clave API.",
+                    parent=self))
+                return
+            
+            # Verificar si hay error en la respuesta de la API
+            if data.get('error') != 'OK':
+                error_msg = data.get('error', 'Error desconocido')
+                print(f"❌ Error de API ComicVine: {error_msg}")
+                self.after(0, lambda: messagebox.showerror(
+                    "Error de ComicVine",
+                    f"ComicVine devolvió un error:\n{error_msg}\n\nVerifica tu clave API en Archivo > Configurar API Keys",
+                    parent=self))
+                return
+            
+            volumes = data.get('results', [])
+            if not volumes:
+                print(f"⚠️ No se encontraron volúmenes para: '{series_name}'")
+                self.after(0, lambda: messagebox.showinfo(
+                    "Sin resultados",
+                    f"No se encontraron volúmenes para '{series_name}'.\n\nIntenta con otro nombre o término de búsqueda.",
+                    parent=self))
+                return
+            
+            # Ordenar por año de inicio
+            volumes = sorted(volumes, key=lambda x: int(x.get('start_year', 9999)))
+            print(f"✅ Encontrados {len(volumes)} volúmenes")
+            
             self.after(0, self.handle_found_volumes, volumes)
-        except requests.exceptions.RequestException as e: self.after(0, lambda: messagebox.showerror("Error de Red", f"No se pudo buscar en Comic Vine.\n{e}", parent=self))
+            
+        except requests.exceptions.Timeout:
+            print(f"❌ Timeout buscando en ComicVine")
+            self.after(0, lambda: messagebox.showerror(
+                "Timeout",
+                "La búsqueda en ComicVine tardó demasiado.\n\nVerifica tu conexión a internet e intenta de nuevo.",
+                parent=self))
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Error de conexión: {e}")
+            self.after(0, lambda: messagebox.showerror(
+                "Error de Conexión",
+                "No se pudo conectar con ComicVine.\n\nVerifica tu conexión a internet.",
+                parent=self))
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error de red buscando en ComicVine: {e}")
+            self.after(0, lambda: messagebox.showerror(
+                "Error de Red",
+                f"No se pudo buscar en ComicVine.\n\nError: {e}",
+                parent=self))
+        except Exception as e:
+            print(f"❌ Error inesperado en búsqueda de volúmenes: {e}")
+            traceback.print_exc()
+            self.after(0, lambda: messagebox.showerror(
+                "Error",
+                f"Error inesperado al buscar volúmenes:\n{e}",
+                parent=self))
+
 
 class BatchRenamerWindow(tk.Toplevel):
     def __init__(self, parent):
@@ -4112,70 +4352,93 @@ class GestorApp:
             messagebox.showerror("Error", f"No se pudo eliminar el archivo:\n{e}", parent=self.root)
     
     def _organizer_save_thread(self, source_path, dest_path, metadata):
-        """Procesar y guardar archivo en hilo separado"""
+        """Procesar y guardar archivo en hilo separado con operaciones atómicas"""
+        temp_cbz = None
+        temp_dir_to_cleanup = None
+        temp_dest = None
+        
         try:
-            temp_cbz = source_path
-            is_converted = False
-            temp_dir_to_cleanup = None
+            # Crear directorio destino si no existe
+            dest_dir = os.path.dirname(dest_path)
+            if dest_dir:
+                os.makedirs(dest_dir, exist_ok=True)
             
-            # 1. Si es CBR, convertir a CBZ
+            working_file = source_path
+            needs_cleanup = False
+            
+            # 1. Si es CBR, convertir a CBZ en /tmp
             if source_path.lower().endswith('.cbr'):
                 try:
                     self.root.after(0, lambda: self.status_var.set("🔄 Convirtiendo CBR a CBZ..."))
                 except RuntimeError:
                     pass  # Ventana cerrada
+                
                 temp_cbz = self._convert_cbr_to_cbz(source_path)
                 if not temp_cbz:
                     raise Exception("No se pudo convertir CBR a CBZ")
-                is_converted = True
+                
+                working_file = temp_cbz
                 temp_dir_to_cleanup = os.path.dirname(temp_cbz)
+                needs_cleanup = True
+                print(f"✅ CBR convertido a temporal: {temp_cbz}")
             
-            # 2. Si ya es CBZ pero necesita metadatos, crear copia temporal
-            elif metadata and source_path.lower().endswith('.cbz'):
-                temp_dir = tempfile.mkdtemp()
-                temp_dir_to_cleanup = temp_dir
-                temp_cbz = os.path.join(temp_dir, os.path.basename(source_path))
-                shutil.copy2(source_path, temp_cbz)
-                is_converted = True
-            
-            # 3. Aplicar metadatos si los hay
+            # 2. Si necesita metadatos, trabajar sobre copia temporal
             if metadata:
                 try:
                     self.root.after(0, lambda: self.status_var.set("📝 Aplicando metadatos..."))
                 except RuntimeError:
                     pass  # Ventana cerrada
                 
+                # Si aún no tenemos una copia temporal, crear una
+                if not needs_cleanup:
+                    temp_dir = tempfile.mkdtemp()
+                    temp_cbz = os.path.join(temp_dir, os.path.basename(source_path))
+                    shutil.copy2(working_file, temp_cbz)
+                    working_file = temp_cbz
+                    temp_dir_to_cleanup = temp_dir
+                    needs_cleanup = True
+                    print(f"📋 Copia temporal creada para metadatos: {temp_cbz}")
+                
                 # Generar XML
                 xml_string = generate_comicinfo_xml(metadata)
                 
                 # Inyectar en el CBZ
-                success = inject_xml_into_cbz(temp_cbz, xml_string)
+                success = inject_xml_into_cbz(working_file, xml_string)
                 if not success:
                     print("⚠️ No se pudieron aplicar metadatos (continuando...)")
+                else:
+                    print("✅ Metadatos aplicados correctamente")
             
-            # 4. Copiar/mover al destino
+            # 3. Copiar/mover al destino de forma atómica
             try:
-                self.root.after(0, lambda: self.status_var.set("📦 Copiando archivo..."))
+                self.root.after(0, lambda: self.status_var.set("📦 Guardando archivo..."))
             except RuntimeError:
                 pass  # Ventana cerrada
             
-            # Crear directorio destino si no existe
-            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            # Crear archivo temporal en el mismo directorio que el destino
+            # para garantizar operación atómica en el mismo filesystem
+            temp_dest = _create_temp_in_dest_dir(dest_path, suffix='.cbz.tmp')
             
-            if is_converted:
-                # Si se modificó, mover el temp
-                shutil.move(temp_cbz, dest_path)
-                # Limpiar directorio temporal
-                if temp_dir_to_cleanup and os.path.exists(temp_dir_to_cleanup):
+            try:
+                # Copiar archivo trabajado al temporal en destino
+                shutil.copy2(working_file, temp_dest)
+                print(f"📦 Archivo copiado a temporal destino: {temp_dest}")
+                
+                # Mover atómicamente temp_dest -> dest_path
+                _atomic_replace(temp_dest, dest_path)
+                temp_dest = None  # Ya no necesita cleanup
+                print(f"✅ Archivo guardado atómicamente en: {dest_path}")
+                
+            except Exception as e:
+                # Si falla, limpiar temp_dest
+                if temp_dest and os.path.exists(temp_dest):
                     try:
-                        shutil.rmtree(temp_dir_to_cleanup)
-                    except Exception as e:
-                        print(f"⚠️ No se pudo limpiar directorio temporal: {e}")
-            else:
-                # Si no se modificó nada, copiar directamente
-                shutil.copy2(source_path, dest_path)
+                        os.remove(temp_dest)
+                    except:
+                        pass
+                raise Exception(f"Error guardando archivo: {e}")
             
-            # 5. Éxito - Preguntar si eliminar original
+            # 4. Éxito - Preguntar si eliminar original
             def ask_delete():
                 response = messagebox.askyesno("¡Guardado!", 
                     f"✅ Archivo guardado en:\n{dest_path}\n\n¿Eliminar el archivo original de la carpeta de descargas?",
@@ -4240,7 +4503,7 @@ class GestorApp:
                 pass  # Ventana cerrada
             
         except Exception as e:
-            print(f"Error guardando: {e}")
+            print(f"❌ Error guardando: {e}")
             traceback.print_exc()
             self.root.after(0, lambda: messagebox.showerror("Error", 
                 f"Error al guardar:\n{e}", parent=self.root))
@@ -4248,6 +4511,22 @@ class GestorApp:
                 self.root.after(0, lambda: self.status_var.set("❌ Error al guardar"))
             except RuntimeError:
                 pass  # Ventana cerrada
+        
+        finally:
+            # Limpieza: eliminar archivos temporales y directorios
+            if temp_dest and os.path.exists(temp_dest):
+                try:
+                    os.remove(temp_dest)
+                    print(f"🧹 Limpiado temp_dest: {temp_dest}")
+                except Exception as e:
+                    print(f"⚠️ No se pudo eliminar temp_dest: {e}")
+            
+            if temp_dir_to_cleanup and os.path.exists(temp_dir_to_cleanup):
+                try:
+                    shutil.rmtree(temp_dir_to_cleanup)
+                    print(f"🧹 Limpiado directorio temporal: {temp_dir_to_cleanup}")
+                except Exception as e:
+                    print(f"⚠️ No se pudo limpiar directorio temporal: {e}")
     
     def _convert_cbr_to_cbz(self, cbr_path):
         """Convertir CBR a CBZ temporal"""
@@ -4802,7 +5081,7 @@ Desarrollado con ❤️ para los amantes del cómic
         
         conn = sqlite3.connect(DB_FILE); cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON;")
-        cursor.execute("CREATE TABLE IF NOT EXISTS comics (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, series_group TEXT, series TEXT, number TEXT, title TEXT, publisher TEXT, year INTEGER, month INTEGER, day INTEGER, writer TEXT, penciller TEXT, inker TEXT, colorist TEXT, letterer TEXT, coverartist TEXT, editor TEXT, summary TEXT, storyarc TEXT, characters TEXT, teams TEXT, web TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS comics (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, series_group TEXT, series TEXT, number TEXT, title TEXT, publisher TEXT, year INTEGER, month INTEGER, day INTEGER, writer TEXT, penciller TEXT, inker TEXT, colorist TEXT, letterer TEXT, coverartist TEXT, editor TEXT, summary TEXT, storyarc TEXT, characters TEXT, teams TEXT, web TEXT, xml_synced INTEGER DEFAULT 0)")
         cursor.execute("CREATE TABLE IF NOT EXISTS authors (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, biography TEXT, photo_filename TEXT)")
         cursor.execute("CREATE TABLE IF NOT EXISTS comic_authors (comic_id INTEGER, author_id INTEGER, role TEXT NOT NULL, FOREIGN KEY (comic_id) REFERENCES comics (id) ON DELETE CASCADE, FOREIGN KEY (author_id) REFERENCES authors (id) ON DELETE CASCADE, PRIMARY KEY (comic_id, author_id, role))")
         
@@ -4829,6 +5108,14 @@ Desarrollado con ❤️ para los amantes del cómic
         try:
             cursor.execute("ALTER TABLE comics ADD COLUMN series_group TEXT")
         except sqlite3.OperationalError: pass
+        
+        # Añadir columna xml_synced si no existe (migración)
+        try:
+            cursor.execute("ALTER TABLE comics ADD COLUMN xml_synced INTEGER DEFAULT 0")
+            print("✅ Columna xml_synced añadida a la base de datos")
+        except sqlite3.OperationalError:
+            pass  # La columna ya existe
+        
         conn.commit(); conn.close(); print("Base de datos lista.")
 
     def scan_library_folder(self, sync_mode='full'):
@@ -5540,13 +5827,88 @@ Desarrollado con ❤️ para los amantes del cómic
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM comics WHERE path = ?", (comic_path,))
             comic_data = cursor.fetchone()
-            conn.close()
             
             if not comic_data:
+                conn.close()
                 print("⚠️ No se encontraron datos para este cómic")
                 return
             
             print(f"✅ Datos encontrados: {len(comic_data.keys())} campos")
+            
+            # Intentar leer metadatos embebidos del ComicInfo.xml
+            embedded_xml = None
+            try:
+                embedded_xml = read_comicinfo_from_cbz(comic_path)
+            except Exception as e:
+                print(f"⚠️ No se pudo leer ComicInfo.xml embebido: {e}")
+            
+            # Si hay XML embebido y el cómic no ha sido sincronizado antes (xml_synced=0 o NULL)
+            if embedded_xml and not comic_data.get('xml_synced'):
+                print("📋 ComicInfo.xml embebido encontrado, sincronizando campos vacíos...")
+                try:
+                    # Parsear XML embebido (ET ya está importado a nivel de módulo)
+                    root = ET.fromstring(embedded_xml)
+                    
+                    # Mapeo de campos XML a campos DB
+                    field_map = {
+                        'Title': 'title',
+                        'Series': 'series',
+                        'Number': 'number',
+                        'Publisher': 'publisher',
+                        'Year': 'year',
+                        'Month': 'month',
+                        'Day': 'day',
+                        'Writer': 'writer',
+                        'Penciller': 'penciller',
+                        'Inker': 'inker',
+                        'Colorist': 'colorist',
+                        'Letterer': 'letterer',
+                        'CoverArtist': 'coverartist',
+                        'Editor': 'editor',
+                        'Summary': 'summary',
+                        'StoryArc': 'storyarc',
+                        'Characters': 'characters',
+                        'Teams': 'teams',
+                        'Web': 'web'
+                    }
+                    
+                    # Construir diccionario de valores a actualizar (solo campos vacíos en DB)
+                    updates = {}
+                    for xml_tag, db_field in field_map.items():
+                        xml_elem = root.find(xml_tag)
+                        if xml_elem is not None and xml_elem.text and xml_elem.text.strip():
+                            # Solo actualizar si el campo en DB está vacío
+                            db_value = comic_data[db_field]
+                            if not db_value or (isinstance(db_value, str) and not db_value.strip()):
+                                updates[db_field] = xml_elem.text.strip()
+                                print(f"  📝 {db_field}: DB vacío, usando valor del XML: {xml_elem.text.strip()[:50]}")
+                    
+                    # Si hay campos para actualizar, hacer UPDATE sin prompt
+                    if updates:
+                        set_clause = ', '.join([f"{field} = ?" for field in updates.keys()])
+                        set_clause += ", xml_synced = 1"
+                        values = list(updates.values()) + [comic_path]
+                        
+                        update_sql = f"UPDATE comics SET {set_clause} WHERE path = ?"
+                        cursor.execute(update_sql, values)
+                        conn.commit()
+                        
+                        print(f"✅ {len(updates)} campos sincronizados desde ComicInfo.xml embebido")
+                        
+                        # Refrescar datos desde DB después del update
+                        cursor.execute("SELECT * FROM comics WHERE path = ?", (comic_path,))
+                        comic_data = cursor.fetchone()
+                    else:
+                        # Marcar como sincronizado aunque no haya cambios
+                        cursor.execute("UPDATE comics SET xml_synced = 1 WHERE path = ?", (comic_path,))
+                        conn.commit()
+                        print("✅ No hay campos vacíos para sincronizar, marcado como xml_synced")
+                        
+                except Exception as e:
+                    print(f"❌ Error sincronizando metadatos embebidos: {e}")
+                    traceback.print_exc()
+            
+            conn.close()
             
             get_text = lambda key: comic_data[key] if comic_data[key] is not None else ""
             
