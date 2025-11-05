@@ -4364,6 +4364,8 @@ Desarrollado con ❤️ para los amantes del cómic
         self.library_frame = left_panel
         
         top_controls_frame = ttk.Frame(left_panel); top_controls_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        # Keep reference for back button placement
+        self.top_controls_frame = top_controls_frame
         scan_menu_button = ttk.Menubutton(top_controls_frame, text="Escanear...")
         scan_menu_button.pack(side=tk.LEFT, padx=(0, 5))
         scan_menu = tk.Menu(scan_menu_button, tearoff=False)
@@ -5325,9 +5327,12 @@ Desarrollado con ❤️ para los amantes del cómic
         
         # Mostrar botón de volver si no existe
         if not hasattr(self, 'back_button') or not self.back_button.winfo_exists():
-            self.back_button = ttk.Button(self.library_frame, text="← Volver",
+            self.back_button = ttk.Button(self.top_controls_frame, text="← Volver",
                                          command=self._exit_stack, bootstyle="info-outline")
-            self.back_button.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.back_button.pack(side=tk.LEFT, padx=(10, 5))
+        else:
+            # Si ya existe pero está oculto, mostrarlo
+            self.back_button.pack(side=tk.LEFT, padx=(10, 5))
         
         # Repoblar la vista con los cómics individuales
         self._repopulate_thumbnail_view()
@@ -5348,7 +5353,7 @@ Desarrollado con ❤️ para los amantes del cómic
         # Ocultar botón de volver si no quedan niveles
         if not self.stack_navigation:
             if hasattr(self, 'back_button') and self.back_button.winfo_exists():
-                self.back_button.grid_remove()
+                self.back_button.pack_forget()
         
         # Repoblar la vista de pilas
         self._repopulate_thumbnail_view()
