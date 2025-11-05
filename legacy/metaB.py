@@ -5371,7 +5371,7 @@ Desarrollado con ❤️ para los amantes del cómic
             # Count overlay
             count_label = tk.Label(cover_container, text=str(len(comics_list)), 
                                   bg='#e74c3c', fg='white', 
-                                  font=('Arial', 14, 'bold'),
+                                  font=('', 14, 'bold'),
                                   padx=8, pady=4)
             count_label.place(relx=1.0, rely=0.0, anchor='ne', x=-5, y=5)
             
