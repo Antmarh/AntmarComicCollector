@@ -4353,10 +4353,14 @@ Desarrollado con ❤️ para los amantes del cómic
     
     def setup_library_tab(self, parent_tab):
         self.library_data = []; self.thumbnail_cache = {}; self.thumbnail_widgets = {}; self.selected_comic_path = None; self.library_view_mode = tk.StringVar(value="list"); self.placeholder_image = tk.PhotoImage(width=150, height=225)
-        paned_window = ttk.PanedWindow(parent_tab, orient=tk.HORIZONTAL); paned_window.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        left_panel = ttk.LabelFrame(paned_window, text="Biblioteca", style='Comic.TLabelframe'); left_panel.rowconfigure(2, weight=1); left_panel.columnconfigure(0, weight=1); paned_window.add(left_panel, weight=2)
+        # Stack view state
+        self.stack_view_var = tk.BooleanVar(value=False)
+        self.stack_navigation = []  # Stack of saved states [(library_data, group_name), ...]
         
-        top_controls_frame = ttk.Frame(left_panel); top_controls_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        paned_window = ttk.PanedWindow(parent_tab, orient=tk.HORIZONTAL); paned_window.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.library_frame = ttk.LabelFrame(paned_window, text="Biblioteca", style='Comic.TLabelframe'); self.library_frame.rowconfigure(2, weight=1); self.library_frame.columnconfigure(0, weight=1); paned_window.add(self.library_frame, weight=2)
+        
+        top_controls_frame = ttk.Frame(self.library_frame); top_controls_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         scan_menu_button = ttk.Menubutton(top_controls_frame, text="Escanear...")
         scan_menu_button.pack(side=tk.LEFT, padx=(0, 5))
         scan_menu = tk.Menu(scan_menu_button, tearoff=False)
@@ -4374,8 +4378,9 @@ Desarrollado con ❤️ para los amantes del cómic
         ttk.Button(top_controls_frame, text="Gestionar Autores...", command=self.open_author_manager).pack(side=tk.LEFT, padx=(0,5))
         ttk.Button(top_controls_frame, text="Órdenes de Lectura...", command=self.open_reading_order_manager).pack(side=tk.LEFT, padx=(0,10))
         self.view_toggle_btn = ttk.Checkbutton(top_controls_frame, text="Vista de Miniaturas", command=self._toggle_library_view, bootstyle="round-toggle"); self.view_toggle_btn.pack(side=tk.RIGHT)
+        self.stack_view_btn = ttk.Checkbutton(top_controls_frame, text="Vista de Pilas", variable=self.stack_view_var, command=self._on_stack_view_toggle, bootstyle="round-toggle"); self.stack_view_btn.pack(side=tk.RIGHT, padx=(0, 5))
 
-        filter_frame = ttk.LabelFrame(left_panel, text="Filtros y Agrupación", padding=5); filter_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
+        filter_frame = ttk.LabelFrame(self.library_frame, text="Filtros y Agrupación", padding=5); filter_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
         filter_frame.columnconfigure(3, weight=1)
         filter_frame.columnconfigure(4, weight=2)
         
@@ -4399,7 +4404,7 @@ Desarrollado con ❤️ para los amantes del cómic
         self.filter_value_entry.bind("<KeyRelease>", self.refresh_library_view)
         ttk.Button(filter_frame, text="Limpiar", command=self.clear_filter).grid(row=0, column=5, sticky="e")
         
-        self.list_view_frame = ttk.Frame(left_panel); self.list_view_frame.grid(row=2, column=0, sticky="nsew")
+        self.list_view_frame = ttk.Frame(self.library_frame); self.list_view_frame.grid(row=2, column=0, sticky="nsew")
         cols = ("path", "Serie", "Número", "Título", "Año"); display_cols = ("Serie", "Número", "Título", "Año")
         self.library_tree = ttk.Treeview(self.list_view_frame, columns=cols, displaycolumns=display_cols, show='tree headings');
         for col in display_cols: self.library_tree.heading(col, text=col)
@@ -4408,7 +4413,7 @@ Desarrollado con ❤️ para los amantes del cómic
         list_scrollbar = ttk.Scrollbar(self.list_view_frame, orient=tk.VERTICAL, command=self.library_tree.yview); list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y); self.library_tree.configure(yscrollcommand=list_scrollbar.set); self.library_tree.bind('<<TreeviewSelect>>', self.on_list_item_selected)
         self.library_tree.bind('<Double-1>', self.read_selected_comic_from_event)
         
-        self.thumb_view_frame = ttk.Frame(left_panel); self.thumb_canvas = tk.Canvas(self.thumb_view_frame, highlightthickness=0); thumb_scrollbar = ttk.Scrollbar(self.thumb_view_frame, orient=tk.VERTICAL, command=self.thumb_canvas.yview)
+        self.thumb_view_frame = ttk.Frame(self.library_frame); self.thumb_canvas = tk.Canvas(self.thumb_view_frame, highlightthickness=0); thumb_scrollbar = ttk.Scrollbar(self.thumb_view_frame, orient=tk.VERTICAL, command=self.thumb_canvas.yview)
         self.thumb_scrollable_frame = ttk.Frame(self.thumb_canvas); self.thumb_scrollable_frame.bind("<Configure>", lambda e: self.thumb_canvas.configure(scrollregion=self.thumb_canvas.bbox("all"))); self.thumb_canvas.create_window((0, 0), window=self.thumb_scrollable_frame, anchor="nw"); self.thumb_canvas.configure(yscrollcommand=thumb_scrollbar.set)
         self.thumb_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); thumb_scrollbar.pack(side=tk.RIGHT, fill=tk.Y); self.thumb_canvas.bind('<Configure>', self._repopulate_thumbnail_view); self.thumb_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         self.thumb_canvas.bind("<Destroy>", lambda e: self.thumb_canvas.unbind_all("<MouseWheel>")); thumb_scrollbar.bind("<B1-Motion>", lambda e: self.root.after(100, self._lazy_load_thumbnails))
@@ -5108,6 +5113,19 @@ Desarrollado con ❤️ para los amantes del cómic
             self.library_view_mode.set("list")
             self.thumb_view_frame.grid_remove()
             self.list_view_frame.grid(row=2, column=0, sticky="nsew")
+    
+    def _on_stack_view_toggle(self):
+        """Handler cuando se activa/desactiva vista de pilas"""
+        print(f"🔄 Vista de pilas {'activada' if self.stack_view_var.get() else 'desactivada'}")
+        
+        # Si se desactiva vista de pilas, salir de cualquier pila abierta
+        if not self.stack_view_var.get():
+            self.stack_navigation.clear()
+            self._hide_back_button()
+        
+        # Refrescar vista si estamos en modo miniaturas
+        if self.library_view_mode.get() == "thumb":
+            self._repopulate_thumbnail_view()
 
     def _repopulate_thumbnail_view(self, event=None):
         """Repuebla la vista de miniaturas al cambiar agrupación"""
@@ -5141,6 +5159,13 @@ Desarrollado con ❤️ para los amantes del cómic
         group_by_key = self.grouping_options[self.group_by_combo.get()]
         group_by_name = self.group_by_combo.get()
         
+        # Detectar si estamos en modo vista de pilas y hay agrupación activa
+        if self.stack_view_var.get() and group_by_key is not None:
+            print(f"📚 Mostrando vista de pilas agrupada por: {group_by_name}")
+            self._show_stack_view(group_by_key, group_by_name, cols)
+            return
+        
+        print(f"📖 Mostrando vista normal de miniaturas")
         current_row = 0
         current_col = 0
         last_group_value = object()
@@ -5208,6 +5233,167 @@ Desarrollado con ❤️ para los amantes del cómic
         
         # Iniciar carga perezosa de imágenes después de un breve retraso
         self.root.after(200, self._lazy_load_thumbnails)
+    
+    def _show_stack_view(self, group_by_key, group_by_name, cols):
+        """Muestra la vista de pilas agrupadas"""
+        print(f"🗂️ Creando vista de pilas por {group_by_name}...")
+        
+        # Agrupar library_data por group_by_key
+        from collections import defaultdict
+        groups = defaultdict(list)
+        
+        for comic in self.library_data:
+            group_value = comic[group_by_key]
+            if group_value is None:
+                group_value = f"(Sin {group_by_name})"
+            groups[group_value].append(comic)
+        
+        # Crear pilas para cada grupo
+        current_row = 0
+        current_col = 0
+        thumb_width = 160
+        
+        for group_name, comics_list in sorted(groups.items()):
+            # Crear frame para la pila
+            stack_frame = ttk.Frame(self.thumb_scrollable_frame, padding=5)
+            stack_frame.grid(row=current_row, column=current_col, sticky='nsew')
+            
+            # Portada representativa (del primer cómic del grupo)
+            representative_path = comics_list[0]['path']
+            
+            # Label para la portada con placeholder
+            cover_label = ttk.Label(stack_frame, image=self.placeholder_image, anchor=CENTER)
+            cover_label.pack(fill=tk.BOTH, expand=True)
+            
+            # Overlay con contador de elementos
+            overlay_frame = ttk.Frame(stack_frame)
+            overlay_frame.place(relx=0.5, rely=0.05, anchor=CENTER)
+            
+            count_label = ttk.Label(
+                overlay_frame,
+                text=f"📚 {len(comics_list)}",
+                font="-size 16 -weight bold",
+                foreground="white",
+                background="rgba(0, 0, 0, 0.7)"
+            )
+            count_label.pack(padx=10, pady=5)
+            
+            # Título del grupo
+            title_label = ttk.Label(
+                stack_frame,
+                text=str(group_name),
+                anchor=CENTER,
+                wraplength=thumb_width - 10,
+                font="-weight bold"
+            )
+            title_label.pack(fill=tk.X, pady=(5, 0))
+            
+            # Si la portada está en cache, usarla inmediatamente
+            if representative_path in self.thumbnail_cache and self.thumbnail_cache[representative_path] not in (None, "loading"):
+                cached_photo = self.thumbnail_cache[representative_path]
+                cover_label.config(image=cached_photo, text="")
+                cover_label.image = cached_photo
+            else:
+                # Cargar en segundo plano
+                if representative_path not in self.thumbnail_cache:
+                    self.thumbnail_cache[representative_path] = "loading"
+                    threading.Thread(target=self._load_single_thumbnail, args=(representative_path,), daemon=True).start()
+            
+            # Guardar referencia del widget
+            stack_key = f"stack_{group_name}"
+            self.thumbnail_widgets[stack_key] = {
+                'frame': stack_frame,
+                'cover': cover_label,
+                'title': title_label,
+                'count': count_label
+            }
+            
+            # Hacer la pila clickeable
+            for widget in (stack_frame, cover_label, title_label, count_label):
+                widget.bind("<Button-1>", lambda e, cl=comics_list, gn=group_name: self._enter_stack(cl, gn))
+            
+            current_col += 1
+            if current_col >= cols:
+                current_col = 0
+                current_row += 1
+        
+        print(f"✅ {len(groups)} pilas creadas")
+        
+        # Iniciar carga perezosa después de un breve retraso
+        self.root.after(200, self._lazy_load_thumbnails)
+    
+    def _enter_stack(self, comics_list, group_name):
+        """Entra en una pila específica para mostrar sus cómics"""
+        print(f"📂 Entrando en pila: {group_name} ({len(comics_list)} cómics)")
+        
+        # Guardar estado actual
+        self.stack_navigation.append({
+            'library_data': self.library_data.copy(),
+            'group_name': group_name
+        })
+        
+        # Cambiar library_data a la lista de cómics de la pila
+        self.library_data = comics_list
+        
+        # Mostrar botón "Volver"
+        self._show_back_button()
+        
+        # Desactivar temporalmente la vista de pilas para mostrar cómics individuales
+        # (guardamos el estado para restaurarlo al salir)
+        saved_stack_view = self.stack_view_var.get()
+        self.stack_view_var.set(False)
+        
+        # Repoblar vista con cómics individuales
+        self._repopulate_thumbnail_view()
+        
+        # Restaurar estado de vista de pilas (pero no refrescar)
+        self.stack_view_var.set(saved_stack_view)
+        
+        print(f"✅ Vista de pila mostrada: {len(comics_list)} cómics")
+    
+    def _exit_stack(self):
+        """Sale de la pila actual y vuelve a la vista de pilas"""
+        if not self.stack_navigation:
+            print("⚠️ No hay pilas en el stack de navegación")
+            return
+        
+        # Restaurar estado anterior
+        previous_state = self.stack_navigation.pop()
+        self.library_data = previous_state['library_data']
+        group_name = previous_state['group_name']
+        
+        print(f"⬅️ Saliendo de pila: {group_name}")
+        
+        # Ocultar botón si ya no hay más pilas en el stack
+        if not self.stack_navigation:
+            self._hide_back_button()
+        
+        # Repoblar vista en modo pilas
+        self._repopulate_thumbnail_view()
+        
+        print(f"✅ Vista de pilas restaurada")
+    
+    def _show_back_button(self):
+        """Muestra el botón 'Volver' en la interfaz"""
+        if not hasattr(self, 'back_button'):
+            # Crear botón solo si no existe
+            self.back_button = ttk.Button(
+                self.library_frame,
+                text="← Volver",
+                command=self._exit_stack
+            )
+        
+        # Posicionar el botón en la parte superior (row=0, antes de top_controls_frame)
+        self.back_button.grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.back_button.lift()  # Traer al frente
+        
+        print("✅ Botón 'Volver' mostrado")
+    
+    def _hide_back_button(self):
+        """Oculta el botón 'Volver'"""
+        if hasattr(self, 'back_button'):
+            self.back_button.grid_remove()
+            print("✅ Botón 'Volver' ocultado")
         
     def _lazy_load_thumbnails(self):
         """Carga perezosa de miniaturas visibles"""
