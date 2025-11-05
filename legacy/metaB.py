@@ -5339,11 +5339,15 @@ Desarrollado con ❤️ para los amantes del cómic
         # Guardar estado actual
         self.stack_navigation.append({
             'library_data': self.library_data.copy(),
-            'group_name': group_name
+            'group_name': group_name,
+            'frame_title': self.library_frame.cget('text')  # Save original title
         })
         
         # Cambiar library_data a la lista de cómics de la pila
         self.library_data = comics_list
+        
+        # Actualizar título del frame
+        self.library_frame.config(text=f"Biblioteca → {group_name}")
         
         # Mostrar botón "Volver"
         self._show_back_button()
@@ -5371,8 +5375,12 @@ Desarrollado con ❤️ para los amantes del cómic
         previous_state = self.stack_navigation.pop()
         self.library_data = previous_state['library_data']
         group_name = previous_state['group_name']
+        frame_title = previous_state.get('frame_title', 'Biblioteca')
         
         print(f"⬅️ Saliendo de pila: {group_name}")
+        
+        # Restaurar título del frame
+        self.library_frame.config(text=frame_title)
         
         # Ocultar botón si ya no hay más pilas en el stack
         if not self.stack_navigation:
