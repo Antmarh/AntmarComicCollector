@@ -5268,8 +5268,8 @@ Desarrollado con ❤️ para los amantes del cómic
             representative_path = representative_comic['path']
             
             cover_label = tk.Label(cover_container, image=self.placeholder_image, 
-                                  bg="#2a2a2a", anchor=CENTER)
-            cover_label.place(relx=0.5, rely=0.5, anchor=CENTER)
+                                  bg="#2a2a2a", anchor=tk.CENTER)
+            cover_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
             
             # Overlay con el número de elementos en la esquina superior derecha
             count_label = tk.Label(cover_container, text=str(len(comics_list)),
@@ -5315,7 +5315,7 @@ Desarrollado con ❤️ para los amantes del cómic
         """Entra en una pila y muestra solo los cómics de ese grupo"""
         print(f"📂 Entrando en pila: {group_name} ({len(comics_list)} cómics)")
         
-        # Guardar el estado actual
+        # Guardar el estado actual (shallow copy is acceptable - we only need the list structure)
         self.stack_navigation.append({
             'library_data': self.library_data.copy(),
             'group_name': group_name
@@ -5325,17 +5325,23 @@ Desarrollado con ❤️ para los amantes del cómic
         self.in_stack = True
         self.library_data = comics_list
         
-        # Mostrar botón de volver si no existe
-        if not hasattr(self, 'back_button') or not self.back_button.winfo_exists():
-            self.back_button = ttk.Button(self.top_controls_frame, text="← Volver",
-                                         command=self._exit_stack, bootstyle="info-outline")
-            self.back_button.pack(side=tk.LEFT, padx=(10, 5))
-        else:
-            # Si ya existe pero está oculto, mostrarlo
-            self.back_button.pack(side=tk.LEFT, padx=(10, 5))
+        # Mostrar botón de volver
+        self._show_back_button()
         
         # Repoblar la vista con los cómics individuales
         self._repopulate_thumbnail_view()
+    
+    def _show_back_button(self):
+        """Muestra el botón de volver en el top controls frame"""
+        if not hasattr(self, 'back_button') or not self.back_button.winfo_exists():
+            self.back_button = ttk.Button(self.top_controls_frame, text="← Volver",
+                                         command=self._exit_stack, bootstyle="info-outline")
+        self.back_button.pack(side=tk.LEFT, padx=(10, 5))
+    
+    def _hide_back_button(self):
+        """Oculta el botón de volver"""
+        if hasattr(self, 'back_button') and self.back_button.winfo_exists():
+            self.back_button.pack_forget()
     
     def _exit_stack(self):
         """Sale de la pila actual y vuelve a la vista de pilas"""
@@ -5352,8 +5358,7 @@ Desarrollado con ❤️ para los amantes del cómic
         
         # Ocultar botón de volver si no quedan niveles
         if not self.stack_navigation:
-            if hasattr(self, 'back_button') and self.back_button.winfo_exists():
-                self.back_button.pack_forget()
+            self._hide_back_button()
         
         # Repoblar la vista de pilas
         self._repopulate_thumbnail_view()
