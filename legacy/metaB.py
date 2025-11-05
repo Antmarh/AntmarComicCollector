@@ -287,6 +287,8 @@ import shutil
 from PIL import Image, ImageDraw, ImageTk
 import traceback
 import socket
+import platform
+import uuid
 from flask import Flask, jsonify, send_file, abort
 from werkzeug.serving import make_server
 
@@ -367,7 +369,6 @@ def _atomic_replace(src, dest):
         return True
     except OSError as e:
         # En algunos casos en Windows, puede ser necesario eliminar el destino primero
-        import platform
         if platform.system() == 'Windows':
             try:
                 if os.path.exists(dest):
@@ -394,12 +395,27 @@ def _create_temp_in_dest_dir(dest_path, suffix='.tmp'):
     os.makedirs(dest_dir, exist_ok=True)
     
     # Crear archivo temporal con nombre único
-    import uuid
     temp_name = f".tmp_{uuid.uuid4().hex}{suffix}"
     temp_path = os.path.join(dest_dir, temp_name)
     return temp_path
 
 
+def _safe_json_decode(response):
+    """
+    Intenta decodificar JSON de respuesta de forma segura.
+    Retorna (success: bool, data: dict or None, error_msg: str or None)
+    """
+    try:
+        data = response.json()
+        return True, data, None
+    except json.JSONDecodeError as e:
+        error_msg = f"Respuesta JSON inválida: {e}"
+        print(f"❌ {error_msg}")
+        return False, None, error_msg
+    except Exception as e:
+        error_msg = f"Error inesperado decodificando JSON: {e}"
+        print(f"❌ {error_msg}")
+        return False, None, error_msg
 
 
 
@@ -1112,11 +1128,9 @@ class MetadataEditorWindow(tk.Toplevel):
                 )
                 response.raise_for_status()
                 
-                # Verificar JSON válido
-                try:
-                    data = response.json()
-                except json.JSONDecodeError as e:
-                    print(f"❌ Error decodificando JSON: {e}")
+                # Verificar JSON válido usando helper
+                success, data, error_msg = _safe_json_decode(response)
+                if not success:
                     self.after(0, lambda: messagebox.showerror(
                         "Error de API",
                         "ComicVine devolvió una respuesta inválida.",
@@ -1151,16 +1165,14 @@ class MetadataEditorWindow(tk.Toplevel):
                 response = requests.get(
                     "https://comicvine.gamespot.com/api/issues/", 
                     params=params, 
-                    headers=HEADERS, 
+                    headers=HEADERS,
                     timeout=REQUEST_TIMEOUT
                 )
                 response.raise_for_status()
                 
-                # Verificar JSON válido
-                try:
-                    data = response.json()
-                except json.JSONDecodeError as e:
-                    print(f"❌ Error decodificando JSON: {e}")
+                # Verificar JSON válido usando helper
+                success, data, error_msg = _safe_json_decode(response)
+                if not success:
                     self.after(0, lambda: messagebox.showerror(
                         "Error de API",
                         "ComicVine devolvió una respuesta inválida.",
@@ -1302,11 +1314,9 @@ class MetadataEditorWindow(tk.Toplevel):
             )
             response.raise_for_status()
             
-            # Verificar que la respuesta sea JSON válido
-            try:
-                data = response.json()
-            except json.JSONDecodeError as e:
-                print(f"❌ Error decodificando JSON de ComicVine: {e}")
+            # Verificar que la respuesta sea JSON válido usando helper
+            success, data, error_msg = _safe_json_decode(response)
+            if not success:
                 self.after(0, lambda: messagebox.showerror(
                     "Error de API",
                     "ComicVine devolvió una respuesta inválida.\n\nPor favor, verifica tu clave API.",
@@ -5836,8 +5846,7 @@ Desarrollado con ❤️ para los amantes del cómic
             if embedded_xml and not comic_data.get('xml_synced'):
                 print("📋 ComicInfo.xml embebido encontrado, sincronizando campos vacíos...")
                 try:
-                    # Parsear XML embebido
-                    import xml.etree.ElementTree as ET
+                    # Parsear XML embebido (ET ya está importado a nivel de módulo)
                     root = ET.fromstring(embedded_xml)
                     
                     # Mapeo de campos XML a campos DB
