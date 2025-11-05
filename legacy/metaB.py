@@ -5285,7 +5285,7 @@ Desarrollado con ❤️ para los amantes del cómic
             
             # Título de la pila
             title_text = f"{group_name}\n({len(comics_list)} cómics)"
-            title_label = ttk.Label(stack_frame, text=title_text, anchor=CENTER,
+            title_label = ttk.Label(stack_frame, text=title_text, anchor=tk.CENTER,
                                    wraplength=thumb_width - 10, font="-weight bold")
             title_label.pack(fill=tk.X, pady=(5, 0))
             
