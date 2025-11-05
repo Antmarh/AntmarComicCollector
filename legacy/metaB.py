@@ -280,7 +280,7 @@ import configparser
 import json
 import time
 from pathlib import Path
-from collections import Counter
+from collections import Counter, defaultdict
 import webbrowser
 import sqlite3
 import shutil
@@ -5340,7 +5340,6 @@ Desarrollado con ❤️ para los amantes del cómic
         print(f"📚 Creando vista de pilas por {group_by_name}...")
         
         # Group library_data by group_by_key
-        from collections import defaultdict
         groups = defaultdict(list)
         
         for comic in self.library_data:
@@ -5372,7 +5371,7 @@ Desarrollado con ❤️ para los amantes del cómic
             # Count overlay
             count_label = tk.Label(cover_container, text=str(len(comics_list)), 
                                   bg='#e74c3c', fg='white', 
-                                  font=('-weight bold -size 14'),
+                                  font=('Arial', 14, 'bold'),
                                   padx=8, pady=4)
             count_label.place(relx=1.0, rely=0.0, anchor='ne', x=-5, y=5)
             
@@ -5434,9 +5433,13 @@ Desarrollado con ❤️ para los amantes del cómic
         
         # Show back button
         if not self.back_button:
-            self.back_button = ttk.Button(self.library_frame, text="← Volver", 
-                                         command=self._exit_stack, 
-                                         bootstyle="outline")
+            if MODERN_UI:
+                self.back_button = ttk.Button(self.library_frame, text="← Volver", 
+                                             command=self._exit_stack, 
+                                             bootstyle="outline")
+            else:
+                self.back_button = ttk.Button(self.library_frame, text="← Volver", 
+                                             command=self._exit_stack)
             self.back_button.grid(row=0, column=0, sticky="w", padx=5, pady=5)
         else:
             self.back_button.grid()
