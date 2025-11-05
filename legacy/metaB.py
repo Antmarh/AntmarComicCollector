@@ -5306,6 +5306,15 @@ Desarrollado con ❤️ para los amantes del cómic
                 'frame': stack_frame,
                 'cover': cover_label,
                 'title': title_label,
+                'count': count_label,
+                'representative_path': representative_path  # Store for thumbnail updates
+            }
+            
+            # ALSO store under representative_path for _update_thumbnail_widget
+            self.thumbnail_widgets[representative_path] = {
+                'frame': stack_frame,
+                'cover': cover_label,
+                'title': title_label,
                 'count': count_label
             }
             
@@ -5413,20 +5422,25 @@ Desarrollado con ❤️ para los amantes del cómic
             # Lista de archivos a cargar
             to_load = []
             
-            for path, widgets in self.thumbnail_widgets.items():
+            for key, widgets in self.thumbnail_widgets.items():
                 if not widgets['frame'].winfo_exists(): 
                     continue
                     
                 widget_y = widgets['frame'].winfo_y()
                 
-                # Si está en el área visible y no está cargado
-                if (visible_top <= widget_y <= visible_bottom and 
-                    path not in self.thumbnail_cache and
-                    os.path.exists(path)):
+                # Si está en el área visible
+                if visible_top <= widget_y <= visible_bottom:
+                    # Para stacks, el key es 'stack_{group_name}', necesitamos extraer el path real
+                    if key.startswith('stack_'):
+                        # No procesar stacks aquí, ya se procesan en _show_stack_view
+                        continue
                     
-                    # Marcar como cargando para evitar duplicados
-                    self.thumbnail_cache[path] = "loading"
-                    to_load.append(path)
+                    # Para cómics normales, el key es el path
+                    path = key
+                    if path not in self.thumbnail_cache and os.path.exists(path):
+                        # Marcar como cargando para evitar duplicados
+                        self.thumbnail_cache[path] = "loading"
+                        to_load.append(path)
             
             # Cargar imágenes en lotes para mejor rendimiento
             if to_load:
